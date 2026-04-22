@@ -48,12 +48,11 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch):
     return avg_loss
 
 def evaluate_loss(model, data_loader, device):
-    """Evaluasi validation loss tanpa update gradien"""
-    model.train() # Harus mode train agar MaskRCNN mengembalikan nilai loss
+    model.train() 
     total_loss = 0
     n_batches = len(data_loader)
     
-    torch.cuda.empty_cache()  # Bersihkan memori GPU sebelum validasi
+    torch.cuda.empty_cache()  
     with torch.no_grad():
         for images, targets in data_loader:
             images  = [img.to(device) for img in images]

@@ -1,8 +1,5 @@
-# auto_annotate.py
-# Script untuk semi-supervised labeling:
-# Menggunakan best_model.pth untuk memprediksi anotasi pada gambar yang belum berlabel,
-# lalu menyimpannya dalam format COCO JSON untuk di-review di Roboflow.
-
+# py auto_annotate.py --split test --threshold 0.3
+# 
 import os
 import json
 import torch
