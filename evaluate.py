@@ -11,6 +11,20 @@ from pycocotools.cocoeval import COCOeval
 from dataset import SampahDataset, SimpleTransform, collate_fn
 from model import get_model
 
+def compute_pr_f1(coco_eval):
+    precision = coco_eval.eval['precision']
+    recall = coco_eval.eval['recall']
+
+    precision = precision[precision > -1]
+    recall = recall[recall > -1]
+
+    mean_precision = np.mean(precision) if len(precision) > 0 else 0
+    mean_recall = np.mean(recall) if len(recall) > 0 else 0
+
+    f1 = 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall + 1e-6)
+
+    return mean_precision, mean_recall, f1
+
 def evaluate(model_path, data_dir='data', split='test', num_classes=7):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -76,7 +90,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
                         'score'      : score,
                     })
 
-    # Evaluasi dengan pycocotools
+    # eval pycoco
     coco_gt = COCO(annotation_file)
 
     bbox_stats = None
@@ -90,6 +104,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
         coco_eval.accumulate()
         coco_eval.summarize()
         bbox_stats = coco_eval.stats
+        b_prec, b_rec, b_f1 = compute_pr_f1(coco_eval)
     else:
         print('Tidak ada prediksi bbox!')
 
@@ -101,6 +116,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
         coco_eval.accumulate()
         coco_eval.summarize()
         segm_stats = coco_eval.stats
+        s_prec, s_rec, s_f1 = compute_pr_f1(coco_eval)
     else:
         print('Tidak ada prediksi segmentation mask!')
 
@@ -113,13 +129,13 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
             
         if bbox_stats is not None:
             b_map, b_map50, b_map75, b_mar = bbox_stats[0], bbox_stats[1], bbox_stats[2], bbox_stats[8]
-            bbox_vals = [b_map, b_map50, b_map75, b_mar, calc_f1(b_map, b_mar)]
+            bbox_vals = [b_map, b_map50, b_map75, b_rec, b_f1]
         else:
             bbox_vals = [0]*5
             
         if segm_stats is not None:
             s_map, s_map50, s_map75, s_mar = segm_stats[0], segm_stats[1], segm_stats[2], segm_stats[8]
-            segm_vals = [s_map, s_map50, s_map75, s_mar, calc_f1(s_map, s_mar)]
+            segm_vals = [s_map, s_map50, s_map75, s_rec, s_f1]
         else:
             segm_vals = [0]*5
         

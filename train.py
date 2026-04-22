@@ -11,7 +11,7 @@ from model import get_model
 CONFIG = {
     'data_dir'     : 'data',
     'num_classes'  : 7,          
-    'num_epochs'   : 50,
+    'num_epochs'   : 45,
     'batch_size'   : 2,          
     'lr'           : 0.001,
     'momentum'     : 0.9,
@@ -100,11 +100,9 @@ def main():
     print(f'[INFO] Train: {len(train_dataset)} gambar')
     print(f'[INFO] Valid: {len(valid_dataset)} gambar')
 
-    # ── Model ────────────────────────────────────────────────────
     model = get_model(num_classes=CONFIG['num_classes'])
     model.to(device)
 
-    # ── Optimizer & Scheduler ────────────────────────────────────
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
         params,
