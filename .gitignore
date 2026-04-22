@@ -1,0 +1,17 @@
+# Model Checkpoints
+/checkpoints/
+*.pth
+
+# Dataset
+/data/
+
+# Model Outputs & Predictions
+/outputs/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
