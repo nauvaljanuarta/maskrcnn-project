@@ -64,6 +64,15 @@ class SampahDataset(torch.utils.data.Dataset):
         if len(boxes) == 0:
             return None
 
+        # Batasi maksimum objek per gambar (cegah memory error)
+        max_objects = 10
+        if len(boxes) > max_objects:
+            boxes = boxes[:max_objects]
+            labels = labels[:max_objects]
+            masks = masks[:max_objects]
+            areas = areas[:max_objects]
+            iscrowd = iscrowd[:max_objects]
+
         target = {
             'boxes'   : torch.as_tensor(boxes,    dtype=torch.float32),
             'labels'  : torch.as_tensor(labels,   dtype=torch.int64),

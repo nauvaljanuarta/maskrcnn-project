@@ -53,6 +53,7 @@ def evaluate_loss(model, data_loader, device):
     total_loss = 0
     n_batches = len(data_loader)
     
+    torch.cuda.empty_cache()  # Bersihkan memori GPU sebelum validasi
     with torch.no_grad():
         for images, targets in data_loader:
             images  = [img.to(device) for img in images]
