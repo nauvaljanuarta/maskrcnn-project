@@ -120,7 +120,151 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
     else:
         print('Tidak ada prediksi segmentation mask!')
 
-    # Visualisasi metrik evaluasi
+    # ============== CONFUSION MATRIX (TP / FP / FN) ==============
+    from model import CLASS_NAMES
+    iou_threshold = 0.5
+    score_threshold = 0.3  # Threshold untuk confusion matrix (prediksi "yakin")
+
+    class_ids = sorted([c['id'] for c in coco_gt.dataset['categories'] if c['id'] != 0])
+    num_cls = len(class_ids)
+
+    # Confusion matrix: baris = GT class, kolom = Predicted class
+    # Tambah 1 kolom/baris untuk "Background" (missed / false)
+    cm = np.zeros((num_cls + 1, num_cls + 1), dtype=int)
+    # Indeks 0..num_cls-1 = kelas 1..6, indeks num_cls = Background/Missed
+
+    tp_per_class = np.zeros(num_cls, dtype=int)
+    fp_per_class = np.zeros(num_cls, dtype=int)
+    fn_per_class = np.zeros(num_cls, dtype=int)
+
+    def compute_iou(box1, box2):
+        """Hitung IoU antara 2 bbox [x1,y1,x2,y2]"""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union = area1 + area2 - inter
+        return inter / union if union > 0 else 0
+
+    # Ambil semua image_id dari ground truth
+    all_img_ids = list(coco_gt.getImgIds())
+
+    for img_id in all_img_ids:
+        # Ground truth boxes
+        ann_ids = coco_gt.getAnnIds(imgIds=img_id)
+        anns = coco_gt.loadAnns(ann_ids)
+        gt_boxes = []
+        gt_labels = []
+        for ann in anns:
+            x, y, w, h = ann['bbox']
+            gt_boxes.append([x, y, x + w, y + h])
+            gt_labels.append(ann['category_id'])
+
+        # Predicted boxes (filter by score threshold)
+        pred_boxes = []
+        pred_labels = []
+        pred_scores = []
+        for r in results_bbox:
+            if r['image_id'] == img_id and r['score'] >= score_threshold:
+                bx = r['bbox']
+                pred_boxes.append([bx[0], bx[1], bx[0] + bx[2], bx[1] + bx[3]])
+                pred_labels.append(r['category_id'])
+                pred_scores.append(r['score'])
+
+        # Sortir prediksi berdasarkan skor (tertinggi dulu)
+        if pred_scores:
+            sorted_idx = np.argsort(pred_scores)[::-1]
+            pred_boxes = [pred_boxes[i] for i in sorted_idx]
+            pred_labels = [pred_labels[i] for i in sorted_idx]
+
+        gt_matched = [False] * len(gt_boxes)
+
+        # Match predictions ke ground truth
+        for pi in range(len(pred_boxes)):
+            best_iou = 0
+            best_gt = -1
+            for gi in range(len(gt_boxes)):
+                if gt_matched[gi]:
+                    continue
+                iou = compute_iou(pred_boxes[pi], gt_boxes[gi])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_gt = gi
+
+            pred_cls_idx = class_ids.index(pred_labels[pi]) if pred_labels[pi] in class_ids else -1
+
+            if best_iou >= iou_threshold and best_gt >= 0:
+                gt_matched[best_gt] = True
+                gt_cls_idx = class_ids.index(gt_labels[best_gt]) if gt_labels[best_gt] in class_ids else -1
+
+                if pred_labels[pi] == gt_labels[best_gt]:
+                    # TP: Benar kelas, benar lokasi
+                    if pred_cls_idx >= 0:
+                        tp_per_class[pred_cls_idx] += 1
+                        cm[gt_cls_idx][pred_cls_idx] += 1
+                else:
+                    # Salah kelas (tapi lokasi benar)
+                    if pred_cls_idx >= 0 and gt_cls_idx >= 0:
+                        fp_per_class[pred_cls_idx] += 1
+                        fn_per_class[gt_cls_idx] += 1
+                        cm[gt_cls_idx][pred_cls_idx] += 1
+            else:
+                # FP: Prediksi tidak cocok dengan GT manapun
+                if pred_cls_idx >= 0:
+                    fp_per_class[pred_cls_idx] += 1
+                    cm[num_cls][pred_cls_idx] += 1  # Background -> Predicted class
+
+        # FN: GT yang tidak terdeteksi
+        for gi in range(len(gt_boxes)):
+            if not gt_matched[gi]:
+                gt_cls_idx = class_ids.index(gt_labels[gi]) if gt_labels[gi] in class_ids else -1
+                if gt_cls_idx >= 0:
+                    fn_per_class[gt_cls_idx] += 1
+                    cm[gt_cls_idx][num_cls] += 1  # GT class -> Background (missed)
+
+    # Hitung total TP/FP/FN
+    total_tp = int(tp_per_class.sum())
+    total_fp = int(fp_per_class.sum())
+    total_fn = int(fn_per_class.sum())
+    total_prec = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
+    total_rec = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
+    total_f1 = 2 * total_prec * total_rec / (total_prec + total_rec) if (total_prec + total_rec) > 0 else 0
+
+    # Visualisasi Confusion Matrix (Heatmap)
+    cm_labels = [CLASS_NAMES.get(cid, f'cls_{cid}') for cid in class_ids] + ['Background']
+
+    fig_cm, ax_cm = plt.subplots(figsize=(9, 7))
+    im = ax_cm.imshow(cm, interpolation='nearest', cmap='Blues')
+    ax_cm.set_title('Confusion Matrix (IoU >= 0.5)', fontsize=14, fontweight='bold')
+    fig_cm.colorbar(im, ax=ax_cm, fraction=0.046, pad=0.04)
+
+    ax_cm.set_xticks(np.arange(num_cls + 1))
+    ax_cm.set_yticks(np.arange(num_cls + 1))
+    ax_cm.set_xticklabels(cm_labels, rotation=45, ha='right', fontsize=9)
+    ax_cm.set_yticklabels(cm_labels, fontsize=9)
+    ax_cm.set_xlabel('Predicted', fontsize=12)
+    ax_cm.set_ylabel('Ground Truth', fontsize=12)
+
+    # Tulis angka di dalam kotak
+    for i in range(num_cls + 1):
+        for j in range(num_cls + 1):
+            val = cm[i, j]
+            color = 'white' if val > cm.max() / 2 else 'black'
+            ax_cm.text(j, i, str(val), ha='center', va='center', color=color, fontsize=11, fontweight='bold')
+
+    os.makedirs('outputs', exist_ok=True)
+    cm_path = os.path.join('outputs', 'confusion_matrix.png')
+    plt.tight_layout()
+    plt.savefig(cm_path, dpi=150)
+    plt.show(block=False)
+    plt.pause(3)
+    plt.close()
+    print(f'[INFO] Confusion matrix disimpan di: {os.path.abspath(cm_path)}')
+
+    # Visualisasi metrik evaluasi (grafik batang)
     if bbox_stats is not None or segm_stats is not None:
         metrics = ['Mean Prec (mAP)', 'mAP@0.50', 'mAP@0.75', 'Mean Recall', 'F1-Score']
         
@@ -163,7 +307,6 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
                             textcoords="offset points",
                             ha='center', va='bottom', fontsize=9)
                             
-        os.makedirs('outputs', exist_ok=True)
         out_path = os.path.join('outputs', 'evaluation_metrics.png')
         plt.tight_layout()
         plt.savefig(out_path, dpi=150)
@@ -171,7 +314,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
         plt.pause(3)
         plt.close()
         
-        print(f'\n[INFO] Grafik evaluasi berhasil disimpan di: {os.path.abspath(out_path)}')
+        print(f'[INFO] Grafik evaluasi berhasil disimpan di: {os.path.abspath(out_path)}')
 
 if __name__ == '__main__':
     evaluate(

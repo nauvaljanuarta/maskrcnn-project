@@ -11,9 +11,9 @@ from model import get_model
 CONFIG = {
     'data_dir'     : 'data',
     'num_classes'  : 7,          
-    'num_epochs'   : 45,
+    'num_epochs'   : 50,
     'batch_size'   : 2,          
-    'lr'           : 0.001,
+    'lr'           : 0.002,
     'momentum'     : 0.9,
     'weight_decay' : 0.0005,
     'step_size'    : 30,         
