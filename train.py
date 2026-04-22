@@ -47,6 +47,23 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch):
     avg_loss = total_loss / n_batches
     return avg_loss
 
+def evaluate_loss(model, data_loader, device):
+    """Evaluasi validation loss tanpa update gradien"""
+    model.train() # Harus mode train agar MaskRCNN mengembalikan nilai loss
+    total_loss = 0
+    n_batches = len(data_loader)
+    
+    with torch.no_grad():
+        for images, targets in data_loader:
+            images  = [img.to(device) for img in images]
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
+            total_loss += losses.item()
+
+    return total_loss / n_batches if n_batches > 0 else 0
+
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'[INFO] Menggunakan device: {device}')
@@ -105,33 +122,49 @@ def main():
     log_path = os.path.join(CONFIG['save_dir'], 'training_log.csv')
     with open(log_path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['epoch', 'train_loss', 'lr'])
+        writer.writerow(['epoch', 'train_loss', 'val_loss', 'lr'])
 
-    best_loss = float('inf')
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    patience = 10
 
     # ── Training Loop ─────────────────────────────────────────────
     for epoch in range(1, CONFIG['num_epochs'] + 1):
+        # 1. Training
         train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch)
+        
+        # 2. Validasi
+        val_loss = evaluate_loss(model, valid_loader, device)
         scheduler.step()
 
         current_lr = optimizer.param_groups[0]['lr']
-        print(f'Epoch {epoch:02d} | Loss: {train_loss:.4f} | LR: {current_lr:.6f}')
+        print(f'Epoch {epoch:02d} | Train: {train_loss:.4f} | Val: {val_loss:.4f} | LR: {current_lr:.6f}')
 
         # Simpan log
         with open(log_path, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([epoch, round(train_loss, 4), current_lr])
+            writer.writerow([epoch, round(train_loss, 4), round(val_loss, 4), current_lr])
 
-        # Simpan model terbaik
-        if train_loss < best_loss:
-            best_loss = train_loss
+        # Simpan model terbaik BERSANDARKAN VALIDATION LOSS
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
             torch.save(model.state_dict(), os.path.join(CONFIG['save_dir'], 'best_model.pth'))
-            print(f'  → Best model saved! (loss={best_loss:.4f})')
+            print(f'  → Best model saved! (val_loss={best_val_loss:.4f})')
+        else:
+            epochs_no_improve += 1
+            print(f'  → Early stopping counter: {epochs_no_improve}/{patience}')
 
         # Simpan model terakhir
         torch.save(model.state_dict(), os.path.join(CONFIG['save_dir'], 'last_model.pth'))
 
-    print(f'\n[DONE] Training selesai! Best loss: {best_loss:.4f}')
+        # Cek Early Stopping
+        if epochs_no_improve >= patience:
+            print(f'\n[STOP] Early stopping memicu penghentian pada epoch {epoch}!')
+            print(f'Validation loss tidak membaik selama {patience} epoch berturut-turut.')
+            break
+
+    print(f'\n[DONE] Training selesai! Best validation loss: {best_val_loss:.4f}')
     print(f'[DONE] Model tersimpan di: {CONFIG["save_dir"]}/')
 
 if __name__ == '__main__':

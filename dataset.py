@@ -100,13 +100,27 @@ class SimpleTransform:
 
     def __call__(self, image, target):
         import random
-        if self.train and random.random() > 0.5:
-            W = image.width
-            image = F.hflip(image)
-            boxes = target['boxes']
-            boxes[:, [0, 2]] = W - boxes[:, [2, 0]]
-            target['boxes'] = boxes
-            target['masks'] = target['masks'].flip(-1)
+        from torchvision.transforms import ColorJitter, GaussianBlur
+        
+        if self.train:
+            # 1. Horizontal Flip
+            if random.random() > 0.5:
+                W = image.width
+                image = F.hflip(image)
+                boxes = target['boxes']
+                boxes[:, [0, 2]] = W - boxes[:, [2, 0]]
+                target['boxes'] = boxes
+                target['masks'] = target['masks'].flip(-1)
+                
+            # 2. Brightness & Contrast Jitter (Pencahayaan Acak)
+            if random.random() > 0.5:
+                jitter = ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2)
+                image = jitter(image)
+                
+            # 3. Gaussian Blur (Efek Kabur Acak)
+            if random.random() > 0.8: # 20% chance
+                blur = GaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0))
+                image = blur(image)
 
         image = F.to_tensor(image)
         return image, target
