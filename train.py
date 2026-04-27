@@ -126,7 +126,6 @@ def main():
     epochs_no_improve = 0
     patience = 10
 
-    # ── Training Loop ─────────────────────────────────────────────
     for epoch in range(1, CONFIG['num_epochs'] + 1):
         # 1. Training
         train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch)
@@ -148,10 +147,10 @@ def main():
             best_val_loss = val_loss
             epochs_no_improve = 0
             torch.save(model.state_dict(), os.path.join(CONFIG['save_dir'], 'best_model.pth'))
-            print(f'  → Best model saved! (val_loss={best_val_loss:.4f})')
+            print(f'  -> Best model saved! (val_loss={best_val_loss:.4f})')
         else:
             epochs_no_improve += 1
-            print(f'  → Early stopping counter: {epochs_no_improve}/{patience}')
+            print(f'  -> Early stopping counter: {epochs_no_improve}/{patience}')
 
         # Simpan model terakhir
         torch.save(model.state_dict(), os.path.join(CONFIG['save_dir'], 'last_model.pth'))
