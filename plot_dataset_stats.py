@@ -32,9 +32,10 @@ PALETTE = {
     'plastic_wrapper' : '#2ECC71',
 }
 
-split_data   = {}  
-split_counts = {}  
-split_img    = {}  
+# ── Load data semua split ─────────────────────────────────────────────────────
+split_data   = {}   # split -> dict json
+split_counts = {}   # split -> {cat_name: count}
+split_img    = {}   # split -> {total, labeled, unlabeled}
 
 for split in SPLITS:
     path = os.path.join(DATA_DIR, split, '_annotations.coco.json')
@@ -71,6 +72,7 @@ for split in SPLITS:
         'anns'     : len(annotations),
     }
 
+# ── Style ─────────────────────────────────────────────────────────────────────
 plt.rcParams.update({
     'font.family'      : 'DejaVu Sans',
     'font.size'        : 11,
@@ -84,6 +86,9 @@ plt.rcParams.update({
 cat_names = list(CATEGORY_NAMES.values())
 colors    = [PALETTE[c] for c in cat_names]
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# GRAFIK 1 — Distribusi objek per kategori per split (Grouped Bar)
+# ═══════════════════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(12, 5))
 
 x      = np.arange(len(cat_names))
