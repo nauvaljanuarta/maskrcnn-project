@@ -1,6 +1,7 @@
 # train.py
 import os
 import csv
+import math
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -10,17 +11,17 @@ from model import get_model
 
 CONFIG = {
     'data_dir'     : 'data',
-    'num_classes'  : 7,          
-    'num_epochs'   : 50,
-    'batch_size'   : 2,          
-    'lr'           : 0.002,
+    'num_classes'  : 4,           # 3 kategori + 1 background
+    'num_epochs'   : 100,         # lebih banyak epoch untuk dataset kecil
+    'batch_size'   : 4,           # batch lebih besar → gradien lebih stabil
+    'lr'           : 0.005,       # LR moderat untuk fine-tuning pretrained
     'momentum'     : 0.9,
     'weight_decay' : 0.0005,
-    'step_size'    : 30,         
-    'gamma'        : 0.1,
+    'warmup_epochs': 5,           # warmup 5 epoch pertama
     'num_workers'  : 0,
     'save_dir'     : 'checkpoints',
-    'print_freq'   : 10,         
+    'print_freq'   : 10,
+    'patience'     : 15,          # early stopping: berhenti jika val_loss tidak membaik selama 15 epoch
 }
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch):
@@ -110,10 +111,11 @@ def main():
         momentum=CONFIG['momentum'],
         weight_decay=CONFIG['weight_decay']
     )
-    scheduler = torch.optim.lr_scheduler.StepLR(
+    # Cosine Annealing — LR turun halus dari lr_max ke ~0
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
-        step_size=CONFIG['step_size'],
-        gamma=CONFIG['gamma']
+        T_max=CONFIG['num_epochs'] - CONFIG['warmup_epochs'],
+        eta_min=1e-6
     )
 
     # ── Log file ─────────────────────────────────────────────────
@@ -123,16 +125,24 @@ def main():
         writer.writerow(['epoch', 'train_loss', 'val_loss', 'lr'])
 
     best_val_loss = float('inf')
-    epochs_no_improve = 0
-    patience = 10
+    epochs_no_improve = 0  # counter early stopping
 
     for epoch in range(1, CONFIG['num_epochs'] + 1):
+        # ── Warmup: naikkan LR secara linear di awal ──
+        if epoch <= CONFIG['warmup_epochs']:
+            warmup_lr = CONFIG['lr'] * (epoch / CONFIG['warmup_epochs'])
+            for pg in optimizer.param_groups:
+                pg['lr'] = warmup_lr
+
         # 1. Training
         train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch)
         
         # 2. Validasi
         val_loss = evaluate_loss(model, valid_loader, device)
-        scheduler.step()
+
+        # Step scheduler hanya setelah warmup selesai
+        if epoch > CONFIG['warmup_epochs']:
+            scheduler.step()
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f'Epoch {epoch:02d} | Train: {train_loss:.4f} | Val: {val_loss:.4f} | LR: {current_lr:.6f}')
@@ -150,15 +160,14 @@ def main():
             print(f'  -> Best model saved! (val_loss={best_val_loss:.4f})')
         else:
             epochs_no_improve += 1
-            print(f'  -> Early stopping counter: {epochs_no_improve}/{patience}')
+            print(f'  -> No improvement ({epochs_no_improve}/{CONFIG["patience"]})')
 
         # Simpan model terakhir
         torch.save(model.state_dict(), os.path.join(CONFIG['save_dir'], 'last_model.pth'))
 
-        # Cek Early Stopping
-        if epochs_no_improve >= patience:
-            print(f'\n[STOP] Early stopping memicu penghentian pada epoch {epoch}!')
-            print(f'Validation loss tidak membaik selama {patience} epoch berturut-turut.')
+        # ── Early Stopping ──
+        if epochs_no_improve >= CONFIG['patience']:
+            print(f'\n[EARLY STOP] Val loss tidak membaik selama {CONFIG["patience"]} epoch. Berhenti di epoch {epoch}.')
             break
 
     print(f'\n[DONE] Training selesai! Best validation loss: {best_val_loss:.4f}')

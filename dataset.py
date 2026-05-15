@@ -54,7 +54,7 @@ class SampahDataset(torch.utils.data.Dataset):
                 continue  # skip bbox tidak valid
 
             boxes.append([x1, y1, x2, y2])
-            labels.append(ann['category_id'])  # 1..6
+            labels.append(ann['category_id'] + 1)  # remap: 0→1, 1→2, 2→3 (0 = background)
             areas.append(ann['area'])
             iscrowd.append(ann['iscrowd'])
 
@@ -110,9 +110,9 @@ class SimpleTransform:
     def __call__(self, image, target):
         import random
         from torchvision.transforms import ColorJitter, GaussianBlur
-        
+
         if self.train:
-            # 1. Horizontal Flip
+            # 1. Horizontal Flip (50%)
             if random.random() > 0.5:
                 W = image.width
                 image = F.hflip(image)
@@ -120,16 +120,58 @@ class SimpleTransform:
                 boxes[:, [0, 2]] = W - boxes[:, [2, 0]]
                 target['boxes'] = boxes
                 target['masks'] = target['masks'].flip(-1)
-                
-            # 2. Brightness & Contrast Jitter (Pencahayaan Acak)
-            if random.random() > 0.5:
-                jitter = ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2)
+
+            # 2. Vertical Flip (30%)
+            if random.random() > 0.7:
+                H = image.height
+                image = F.vflip(image)
+                boxes = target['boxes']
+                boxes[:, [1, 3]] = H - boxes[:, [3, 1]]
+                target['boxes'] = boxes
+                target['masks'] = target['masks'].flip(-2)
+
+            # 3. Color Jitter — lebih agresif untuk variasi cahaya drone
+            if random.random() > 0.3:
+                jitter = ColorJitter(
+                    brightness=0.4, contrast=0.4,
+                    saturation=0.3, hue=0.1
+                )
                 image = jitter(image)
-                
-            # 3. Gaussian Blur (Efek Kabur Acak)
-            if random.random() > 0.8: # 20% chance
+
+            # 4. Gaussian Blur (20%)
+            if random.random() > 0.8:
                 blur = GaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0))
                 image = blur(image)
 
         image = F.to_tensor(image)
         return image, target
+
+
+if __name__ == '__main__':
+    import os
+
+    for split in ['train', 'valid', 'test']:
+        ann_path = os.path.join('data', split, '_annotations.coco.json')
+        if not os.path.exists(ann_path):
+            print(f'[{split.upper()}] File not found: {ann_path}')
+            continue
+
+        ds = SampahDataset(
+            root=os.path.join('data', split),
+            annotation_file=ann_path,
+            transforms=SimpleTransform(train=False)
+        )
+        print(f'[{split.upper()}] {len(ds)} gambar')
+
+        # Test load 1 sample
+        sample = ds[0]
+        if sample is not None:
+            img, target = sample
+            print(f'  Image shape : {img.shape}')
+            print(f'  Num objects : {len(target["boxes"])}')
+            print(f'  Labels      : {target["labels"].tolist()}')
+            print(f'  Boxes shape : {target["boxes"].shape}')
+            print(f'  Masks shape : {target["masks"].shape}')
+        else:
+            print('  Sample 0 is None (no annotations)')
+        print()

@@ -25,7 +25,7 @@ def compute_pr_f1(coco_eval):
 
     return mean_precision, mean_recall, f1
 
-def evaluate(model_path, data_dir='data', split='test', num_classes=7):
+def evaluate(model_path, data_dir='data', split='test', num_classes=4):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load model
@@ -72,7 +72,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
 
                     results_bbox.append({
                         'image_id'   : image_id,
-                        'category_id': int(labels[i]),
+                        'category_id': int(labels[i]) - 1,  # remap balik: model 1,2,3 → COCO 0,1,2
                         'bbox'       : bbox_coco,
                         'score'      : score,
                     })
@@ -85,7 +85,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
 
                     results_segm.append({
                         'image_id'   : image_id,
-                        'category_id': int(labels[i]),
+                        'category_id': int(labels[i]) - 1,  # remap balik: model 1,2,3 → COCO 0,1,2
                         'segmentation': rle,
                         'score'      : score,
                     })
@@ -125,7 +125,7 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=7):
     iou_threshold = 0.5
     score_threshold = 0.3  # Threshold untuk confusion matrix (prediksi "yakin")
 
-    class_ids = sorted([c['id'] for c in coco_gt.dataset['categories'] if c['id'] != 0])
+    class_ids = sorted([c['id'] for c in coco_gt.dataset['categories']])
     num_cls = len(class_ids)
 
     # Confusion matrix: baris = GT class, kolom = Predicted class

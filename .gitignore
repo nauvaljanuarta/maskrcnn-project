@@ -5,6 +5,12 @@
 # Dataset
 /data/
 
+# Output hasil prediksi
+/outputs/
+
+# Virtual Environment
+.venv/
+
 # Python Cache
 __pycache__/
 *.pyc
@@ -12,3 +18,10 @@ __pycache__/
 # IDEs
 .vscode/
 .idea/
+
+# Temp scripts
+check_*.py
+
+# OS files
+Thumbs.db
+.DS_Store

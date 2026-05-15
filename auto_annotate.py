@@ -14,7 +14,7 @@ def auto_annotate(
     model_path='checkpoints/best_model.pth',
     data_dir='data',
     split='train',
-    num_classes=7,
+    num_classes=4,
     score_threshold=0.3,
     output_dir='outputs/auto_annotations'
 ):
@@ -96,7 +96,7 @@ def auto_annotate(
                 ann = {
                     'id': ann_id_counter,
                     'image_id': img_info['id'],
-                    'category_id': int(labels[i]),
+                    'category_id': int(labels[i]) - 1,  # remap balik: model 1,2,3 → COCO 0,1,2
                     'bbox': [round(float(x1), 3), round(float(y1), 3),
                              round(bbox_w, 3), round(bbox_h, 3)],
                     'area': round(area, 3),
