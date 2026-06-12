@@ -95,10 +95,8 @@ def predict_image(image_path, model_path, num_classes=7, score_threshold=0.5):
     out_path = os.path.join('outputs', f"{base_name}_predicted{ext}")
     
     plt.savefig(out_path, bbox_inches='tight', dpi=150)
-    # Gunakan block=False agar tidak nyangkut lama di CLI (tergantung kebutuhan OS)
-    plt.show(block=False) 
-    plt.pause(3)
-    plt.close()
+    # Tampilkan hasil gambar dan tunggu user menutupnya
+    plt.show()
     
     print(f'\nHasil disimpan di: {out_path}')
 

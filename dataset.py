@@ -110,9 +110,9 @@ class SimpleTransform:
     def __call__(self, image, target):
         import random
         from torchvision.transforms import ColorJitter, GaussianBlur
-        
+
         if self.train:
-            # 1. Horizontal Flip
+            # 1. Horizontal Flip (50%)
             if random.random() > 0.5:
                 W = image.width
                 image = F.hflip(image)
@@ -120,14 +120,26 @@ class SimpleTransform:
                 boxes[:, [0, 2]] = W - boxes[:, [2, 0]]
                 target['boxes'] = boxes
                 target['masks'] = target['masks'].flip(-1)
-                
-            # 2. Brightness & Contrast Jitter (Pencahayaan Acak)
-            if random.random() > 0.5:
-                jitter = ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2)
+
+            # 2. Vertical Flip (30%)
+            if random.random() > 0.7:
+                H = image.height
+                image = F.vflip(image)
+                boxes = target['boxes']
+                boxes[:, [1, 3]] = H - boxes[:, [3, 1]]
+                target['boxes'] = boxes
+                target['masks'] = target['masks'].flip(-2)
+
+            # 3. Color Jitter — lebih agresif untuk variasi cahaya drone
+            if random.random() > 0.3:
+                jitter = ColorJitter(
+                    brightness=0.4, contrast=0.4,
+                    saturation=0.3, hue=0.1
+                )
                 image = jitter(image)
-                
-            # 3. Gaussian Blur (Efek Kabur Acak)
-            if random.random() > 0.8: # 20% chance
+
+            # 4. Gaussian Blur (20%)
+            if random.random() > 0.8:
                 blur = GaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0))
                 image = blur(image)
 
