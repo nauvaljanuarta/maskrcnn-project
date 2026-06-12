@@ -1,8 +1,4 @@
-"""
-plot_dataset_stats.py
-Membuat grafik statistik distribusi label/anotasi sampah dari semua split dataset.
-Hasil disimpan ke checkpoints/plots/
-"""
+
 
 import json
 import os

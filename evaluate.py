@@ -9,7 +9,7 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 from dataset import SampahDataset, SimpleTransform, collate_fn
-from model import get_model
+from model import get_model, CLASS_NAMES
 
 def compute_pr_f1(coco_eval):
     precision = coco_eval.eval['precision']
@@ -30,7 +30,8 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
 
     # Load model
     model = get_model(num_classes=num_classes)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()
 
@@ -93,6 +94,20 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
     # eval pycoco
     coco_gt = COCO(annotation_file)
 
+    # Perbaikan anotasi segmentasi dari Roboflow yang kosong/error
+    for ann in coco_gt.dataset['annotations']:
+        if 'segmentation' not in ann:
+            x, y, w, h = ann['bbox']
+            ann['segmentation'] = [[x, y, x+w, y, x+w, y+h, x, y+h]]
+        elif isinstance(ann['segmentation'], list):
+            if len(ann['segmentation']) == 0:
+                x, y, w, h = ann['bbox']
+                ann['segmentation'] = [[x, y, x+w, y, x+w, y+h, x, y+h]]
+            elif len(ann['segmentation']) > 0 and not isinstance(ann['segmentation'][0], (list, dict)):
+                ann['segmentation'] = [ann['segmentation']]
+    
+    coco_gt.createIndex()
+
     bbox_stats = None
     segm_stats = None
 
@@ -121,24 +136,21 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
         print('Tidak ada prediksi segmentation mask!')
 
     # ============== CONFUSION MATRIX (TP / FP / FN) ==============
-    from model import CLASS_NAMES
     iou_threshold = 0.5
-    score_threshold = 0.3  # Threshold untuk confusion matrix (prediksi "yakin")
+    score_threshold = 0.3  # Threshold confidence
 
+    # Ambil class_ids dari COCO (biasanya 0, 1, 2)
     class_ids = sorted([c['id'] for c in coco_gt.dataset['categories']])
     num_cls = len(class_ids)
 
-    # Confusion matrix: baris = GT class, kolom = Predicted class
-    # Tambah 1 kolom/baris untuk "Background" (missed / false)
+    # Buat matrix ukuran (num_cls + 1) x (num_cls + 1)
     cm = np.zeros((num_cls + 1, num_cls + 1), dtype=int)
-    # Indeks 0..num_cls-1 = kelas 1..6, indeks num_cls = Background/Missed
 
     tp_per_class = np.zeros(num_cls, dtype=int)
     fp_per_class = np.zeros(num_cls, dtype=int)
     fn_per_class = np.zeros(num_cls, dtype=int)
 
     def compute_iou(box1, box2):
-        """Hitung IoU antara 2 bbox [x1,y1,x2,y2]"""
         x1 = max(box1[0], box2[0])
         y1 = max(box1[1], box2[1])
         x2 = min(box1[2], box2[2])
@@ -149,11 +161,9 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
         union = area1 + area2 - inter
         return inter / union if union > 0 else 0
 
-    # Ambil semua image_id dari ground truth
     all_img_ids = list(coco_gt.getImgIds())
 
     for img_id in all_img_ids:
-        # Ground truth boxes
         ann_ids = coco_gt.getAnnIds(imgIds=img_id)
         anns = coco_gt.loadAnns(ann_ids)
         gt_boxes = []
@@ -163,7 +173,6 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
             gt_boxes.append([x, y, x + w, y + h])
             gt_labels.append(ann['category_id'])
 
-        # Predicted boxes (filter by score threshold)
         pred_boxes = []
         pred_labels = []
         pred_scores = []
@@ -174,7 +183,6 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
                 pred_labels.append(r['category_id'])
                 pred_scores.append(r['score'])
 
-        # Sortir prediksi berdasarkan skor (tertinggi dulu)
         if pred_scores:
             sorted_idx = np.argsort(pred_scores)[::-1]
             pred_boxes = [pred_boxes[i] for i in sorted_idx]
@@ -182,7 +190,6 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
 
         gt_matched = [False] * len(gt_boxes)
 
-        # Match predictions ke ground truth
         for pi in range(len(pred_boxes)):
             best_iou = 0
             best_gt = -1
@@ -201,58 +208,64 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
                 gt_cls_idx = class_ids.index(gt_labels[best_gt]) if gt_labels[best_gt] in class_ids else -1
 
                 if pred_labels[pi] == gt_labels[best_gt]:
-                    # TP: Benar kelas, benar lokasi
+                    # True Positive
                     if pred_cls_idx >= 0:
                         tp_per_class[pred_cls_idx] += 1
                         cm[gt_cls_idx][pred_cls_idx] += 1
                 else:
-                    # Salah kelas (tapi lokasi benar)
+                    # Misclassified
                     if pred_cls_idx >= 0 and gt_cls_idx >= 0:
                         fp_per_class[pred_cls_idx] += 1
                         fn_per_class[gt_cls_idx] += 1
                         cm[gt_cls_idx][pred_cls_idx] += 1
             else:
-                # FP: Prediksi tidak cocok dengan GT manapun
+                # False Positive (Prediksi ada, tapi GT tidak ada)
                 if pred_cls_idx >= 0:
                     fp_per_class[pred_cls_idx] += 1
-                    cm[num_cls][pred_cls_idx] += 1  # Background -> Predicted class
+                    cm[num_cls][pred_cls_idx] += 1 
 
-        # FN: GT yang tidak terdeteksi
         for gi in range(len(gt_boxes)):
             if not gt_matched[gi]:
+                # False Negative (GT ada, tapi gagal diprediksi)
                 gt_cls_idx = class_ids.index(gt_labels[gi]) if gt_labels[gi] in class_ids else -1
                 if gt_cls_idx >= 0:
                     fn_per_class[gt_cls_idx] += 1
-                    cm[gt_cls_idx][num_cls] += 1  # GT class -> Background (missed)
+                    cm[gt_cls_idx][num_cls] += 1 
 
-    # Hitung total TP/FP/FN
-    total_tp = int(tp_per_class.sum())
-    total_fp = int(fp_per_class.sum())
-    total_fn = int(fn_per_class.sum())
-    total_prec = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
-    total_rec = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0
-    total_f1 = 2 * total_prec * total_rec / (total_prec + total_rec) if (total_prec + total_rec) > 0 else 0
+    # ============== VISUALISASI CONFUSION MATRIX ==============
+    # Remap label: Karena class_ids COCO itu 0, 1, 2, tapi di CLASS_NAMES id-nya 1, 2, 3
+    # Kita tambahkan 1 agar namanya terbaca benar (Trash, plastic_bag, dsb.)
+    base_labels = [CLASS_NAMES.get(cid + 1, f'Class_{cid}') for cid in class_ids]
+    
+    # Label X (Prediksi) ditambahkan kolom False Negative
+    cm_labels_x = base_labels + ['Missed (FN)']
+    # Label Y (Ground Truth) ditambahkan baris False Positive
+    cm_labels_y = base_labels + ['Ghost Pred (FP)']
 
-    # Visualisasi Confusion Matrix (Heatmap)
-    cm_labels = [CLASS_NAMES.get(cid, f'cls_{cid}') for cid in class_ids] + ['Background']
-
-    fig_cm, ax_cm = plt.subplots(figsize=(9, 7))
+    fig_cm, ax_cm = plt.subplots(figsize=(10, 8))
     im = ax_cm.imshow(cm, interpolation='nearest', cmap='Blues')
-    ax_cm.set_title('Confusion Matrix (IoU >= 0.5)', fontsize=14, fontweight='bold')
+    
+    ax_cm.set_title(f'Confusion Matrix\n(IoU \u2265 {iou_threshold}, Conf \u2265 {score_threshold})', fontsize=14, fontweight='bold', pad=15)
     fig_cm.colorbar(im, ax=ax_cm, fraction=0.046, pad=0.04)
 
     ax_cm.set_xticks(np.arange(num_cls + 1))
     ax_cm.set_yticks(np.arange(num_cls + 1))
-    ax_cm.set_xticklabels(cm_labels, rotation=45, ha='right', fontsize=9)
-    ax_cm.set_yticklabels(cm_labels, fontsize=9)
-    ax_cm.set_xlabel('Predicted', fontsize=12)
-    ax_cm.set_ylabel('Ground Truth', fontsize=12)
+    
+    ax_cm.set_xticklabels(cm_labels_x, rotation=45, ha='right', fontsize=10)
+    ax_cm.set_yticklabels(cm_labels_y, fontsize=10)
+    
+    ax_cm.set_xlabel('Predicted Class', fontsize=12, fontweight='bold', labelpad=10)
+    ax_cm.set_ylabel('Ground Truth (Actual)', fontsize=12, fontweight='bold', labelpad=10)
 
     # Tulis angka di dalam kotak
+    thresh = cm.max() / 2.
     for i in range(num_cls + 1):
         for j in range(num_cls + 1):
             val = cm[i, j]
-            color = 'white' if val > cm.max() / 2 else 'black'
+            # Sembunyikan angka 0 di cell Background-Background karena tidak relevan
+            if i == num_cls and j == num_cls:
+                continue 
+            color = 'white' if val > thresh else 'black'
             ax_cm.text(j, i, str(val), ha='center', va='center', color=color, fontsize=11, fontweight='bold')
 
     os.makedirs('outputs', exist_ok=True)
@@ -268,9 +281,6 @@ def evaluate(model_path, data_dir='data', split='test', num_classes=4):
     if bbox_stats is not None or segm_stats is not None:
         metrics = ['Mean Prec (mAP)', 'mAP@0.50', 'mAP@0.75', 'Mean Recall', 'F1-Score']
         
-        def calc_f1(p, r):
-            return 2 * (p * r) / (p + r) if (p + r) > 0 else 0
-            
         if bbox_stats is not None:
             b_map, b_map50, b_map75, b_mar = bbox_stats[0], bbox_stats[1], bbox_stats[2], bbox_stats[8]
             bbox_vals = [b_map, b_map50, b_map75, b_rec, b_f1]
