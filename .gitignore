@@ -25,3 +25,6 @@ check_*.py
 # OS files
 Thumbs.db
 .DS_Store
+
+# data predict
+/data_predict/
